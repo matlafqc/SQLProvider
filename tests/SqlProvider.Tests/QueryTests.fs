@@ -393,6 +393,16 @@ let ``simple select query with averageBy``() =
     Assert.Greater(27m, query)
     Assert.Less(26m, query)
 
+[<Test>]
+let ``simplest select query with groupBy``() = 
+    let dc = sql.GetDataContext()
+    let query = 
+        query {
+            for cust in dc.Main.Customers do
+            groupBy cust.City
+        } |> Seq.toArray
+    Assert.IsNotEmpty(query)
+
 [<Test; Ignore("Not Supported")>]
 let ``simple select query with groupBy``() = 
     let dc = sql.GetDataContext()

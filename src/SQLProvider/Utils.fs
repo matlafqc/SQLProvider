@@ -72,6 +72,7 @@ module internal Utilities =
     | Min
     | Sum
     | Avg
+    | CountOp
 
     let parseAggregates fieldNotation fieldNotationAlias query =
         let rec parseAggregates' fieldNotation fieldNotationAlias query (selectColumns:string list) =
@@ -84,6 +85,7 @@ module internal Utilities =
                     | Max -> "MAX"
                     | Min -> "MIN"
                     | Avg -> "AVG"
+                    | CountOp -> "COUNT"
                 let parsed = 
                          (aggregate + "(" + fieldNotation(opAlias, sumCol) + ") as " + fieldNotationAlias(sumCol, aggregate)) :: selectColumns
                 parseAggregates' fieldNotation fieldNotationAlias tail parsed

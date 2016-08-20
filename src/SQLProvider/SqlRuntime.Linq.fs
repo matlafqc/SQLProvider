@@ -15,6 +15,12 @@ open FSharp.Data.Sql.Schema
 type IWithDataContext =
     abstract DataContext : ISqlDataContext
 
+type GroupResultItems<'key, 'itm>(k, collection:seq<'itm>) =
+    inherit ResizeArray<'itm> (collection) 
+    member __.Values = collection
+    interface System.Linq.IGrouping<'key, 'itm> with
+         member __.Key = k
+
 module internal QueryImplementation =
     open System.Linq
     open System.Linq.Expressions
@@ -162,6 +168,67 @@ module internal QueryImplementation =
             async {
                 let! executeSql = executeQueryAsync dc provider sqlQuery tupleIndex
                 return (Seq.cast<'T> (executeSql)).GetEnumerator()
+            }
+
+    and SqlGroupingQueryable<'TKey, 'TEntity>(dc:ISqlDataContext,provider,sqlQuery,tupleIndex) =
+        static member Create(table,conString,provider) =
+            SqlGroupingQueryable<'TKey, 'TEntity>(conString,provider,BaseTable("",table),ResizeArray<_>()) :> IQueryable<IGrouping<'TKey, 'TEntity>>
+        interface IQueryable<IGrouping<'TKey, 'TEntity>>
+        interface IQueryable with
+            member __.Provider = 
+                SqlQueryProvider.Provider
+            member x.Expression =  
+                Expression.Constant(x,typeof<SqlGroupingQueryable<'TKey, 'TEntity>>) :> Expression
+            member __.ElementType = 
+                typeof<IGrouping<'TKey, 'TEntity>>
+        interface seq<IGrouping<'TKey, 'TEntity>> with
+             member __.GetEnumerator() = 
+                
+                let entityIndex = new ResizeArray<_>()
+                let qry = SqlQuery.ofSqlExp(sqlQuery,entityIndex)
+                let keys = qry.Grouping |> List.map(fun (keys,aggrs) -> keys) |> List.concat |> List.map snd |> Seq.distinct |> Seq.toList
+                let itms = executeQuery dc provider sqlQuery tupleIndex |> Seq.cast<SqlEntity> |> Seq.toList
+                
+                // ToDo: GroupBy: Now we create SQL-group-by-clause, then return results from SQL as SqlEntity-list
+                // and group "again" manually. Works, but maybe we could return something else than SqlEntity-list?
+
+                let keyCols = 
+                    keys |> List.map(fun keyItem ->
+                        let keyVal = 
+                            itms |> Seq.map(fun ent -> 
+                                ent.ColumnValues |> Seq.filter(fun (k,i) -> k = keyItem) 
+                                                 |> Seq.distinct) |> Seq.concat |> Seq.toList
+                        
+                        keyVal |> List.map(fun (pairkey, pairval) ->
+                            let foundItem =
+                                itms |> List.filter(fun ent -> ent.ColumnValues |> Seq.exists(fun (k,i) -> k = pairkey && i = pairval))
+
+                            GroupResultItems(unbox(pairval),foundItem) :> IGrouping<'TKey, SqlEntity>
+                        ) |> List.toSeq
+                    )
+
+                match keys with
+                | [x] -> let casted = keyCols.[0] |> Seq.cast<IGrouping<'TKey, 'TEntity>>
+                         casted.GetEnumerator()
+                | [] -> Seq.empty.GetEnumerator()
+                | xs -> failwith("Multiple groupings not yet implemented.")
+
+        interface IEnumerable with
+             member x.GetEnumerator() = 
+                let itms = (x :> seq<IGrouping<'TKey, 'TEntity>>)
+                itms.GetEnumerator() :> IEnumerator
+        interface IWithDataContext with
+             member __.DataContext = dc
+        interface IWithSqlService with
+             member __.DataContext = dc
+             member __.SqlExpression = sqlQuery
+             member __.TupleIndex = tupleIndex
+             member __.Provider = provider
+        member __.GetAsyncEnumerator() =
+            async {
+                let! executeSql = executeQueryAsync dc provider sqlQuery tupleIndex
+                let toseq = executeSql |> Seq.cast<IGrouping<'TKey, 'TEntity>>
+                return toseq.GetEnumerator()
             }
 
     and SqlQueryProvider() =
@@ -314,6 +381,35 @@ module internal QueryImplementation =
 
                     | MethodCall(None, (MethodWithName "Where" as meth), [ SourceWithQueryData source; OptionalQuote qual ]) ->
                         parseWhere meth source qual
+                    | MethodCall(None, (MethodWithName "GroupBy" as meth),
+                                    [ SourceWithQueryData source;
+                                      OptionalQuote (Lambda([ParamName sourceAlias],SqlColumnGet(sourceTi,sourceKey,_)) as lambda)]) ->
+
+                        let alias =
+                             match sourceTi with
+                             | "" when source.SqlExpression.HasAutoTupled() -> sourceAlias
+                             | "" -> ""
+                             | _ -> resolveTuplePropertyName sourceTi source.TupleIndex
+
+                        let sourceEntity =
+                            match source.SqlExpression with
+                            | BaseTable(alias,sourceEntity) -> sourceEntity
+                            | _ -> failwithf "Unexpected destination entity expression (%A)." source.SqlExpression
+
+                        // ToDo: GroupBy: We have to parse the key and aggregate columns!
+                        let data =  {
+                            PrimaryTable = sourceEntity
+                            KeyColumns = [sourceKey]
+                            AggregateColumns = [CountOp,alias,"City"]
+                        }
+                        let exp =
+                            GroupBy(sourceEntity.Name,data,source.SqlExpression)
+
+                        let ty = typedefof<SqlGroupingQueryable<_,_>>.MakeGenericType(typeof<String>, meth.GetGenericArguments().[0])
+                        let r = ty.GetConstructors().[0].Invoke [| source.DataContext; source.Provider; exp; source.TupleIndex;|]
+                        let casted = unbox(r) :> IQueryable<IGrouping<_,_>>
+                        casted :?> IQueryable<'T>
+
                     | MethodCall(None, (MethodWithName "Join"),
                                     [ SourceWithQueryData source;
                                       SourceWithQueryData dest

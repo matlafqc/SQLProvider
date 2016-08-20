@@ -286,6 +286,11 @@ and LinkData =
         member x.Rev() =
             { x with PrimaryTable = x.ForeignTable; PrimaryKey = x.ForeignKey; ForeignTable = x.PrimaryTable; ForeignKey = x.PrimaryKey }
 
+and internal GroupData =
+    { PrimaryTable       : Table
+      KeyColumns         : string list
+      AggregateColumns   : (Utilities.AggregateOperation * alias * string) list }
+
 and alias = string
 and table = string
 
@@ -305,6 +310,7 @@ and internal SqlExp =
     | Projection   of Expression * SqlExp                // entire LINQ projection expression tree
     | Distinct     of SqlExp                             // distinct indicator
     | OrderBy      of alias * string * bool * SqlExp     // alias and column name, bool indicates ascending sort
+    | GroupBy      of alias * GroupData * SqlExp     // alias and column names
     | Skip         of int * SqlExp
     | Take         of int * SqlExp
     | Count        of SqlExp
@@ -317,6 +323,7 @@ and internal SqlExp =
                 | Projection(_,rest)
                 | Distinct rest
                 | OrderBy(_,_,_,rest)
+                | GroupBy(_,_,rest)
                 | Skip(_,rest)
                 | Take(_,rest)
                 | Count(rest) 
@@ -328,6 +335,7 @@ and internal SqlQuery =
       Links         : (alias * LinkData * alias) list
       Aliases       : Map<string, Table>
       Ordering      : (alias * string * bool) list
+      Grouping      : (list<alias * string> * list<Utilities.AggregateOperation * alias * string>) list //key columns, aggregate columns
       Projection    : Expression option
       Distinct      : bool
       UltimateChild : (string * Table) option
@@ -336,7 +344,7 @@ and internal SqlQuery =
       Count         : bool 
       AggregateOp   : (Utilities.AggregateOperation * alias * string) list }
     with
-        static member Empty = { Filters = []; Links = []; Aliases = Map.empty; Ordering = []; Count = false; AggregateOp = []
+        static member Empty = { Filters = []; Links = []; Grouping = []; Aliases = Map.empty; Ordering = []; Count = false; AggregateOp = []
                                 Projection = None; Distinct = false; UltimateChild = None; Skip = None; Take = None }
 
         static member ofSqlExp(exp,entityIndex: string ResizeArray) =
@@ -369,6 +377,11 @@ and internal SqlQuery =
                     else convert { q with Distinct = true } rest
                 | OrderBy(alias,key,desc,rest) ->
                     convert { q with Ordering = (legaliseName alias,key,desc)::q.Ordering } rest
+                | GroupBy(tablename,groupdata,rest) ->
+                    convert { 
+                        q with Grouping = let f = groupdata.KeyColumns |> List.map (fun k -> legaliseName tablename, k)
+                                          let s = groupdata.AggregateColumns |> List.map (fun (op,alias,key) -> op, legaliseName tablename, key)
+                                          (f,s)::q.Grouping } rest
                 | Skip(amount, rest) ->
                     if q.Skip.IsSome then failwith "skip may only be specified once"
                     else convert { q with Skip = Some(amount) } rest

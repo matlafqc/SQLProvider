@@ -547,8 +547,12 @@ type internal MSSqlServerProvider() =
                         match String.IsNullOrEmpty(al) with
                         | true -> sprintf "'%s'" col
                         | false -> sprintf "'[%s%s]'" al col
-                    FSharp.Data.Sql.Common.Utilities.parseAggregates fieldNotation fieldNotationAlias sqlQuery.AggregateOp
-                // Currently we support only aggregate or select. selectcolumns + String.Join(",", extracolumns) when groupBy is ready
+
+                    match sqlQuery.Grouping with
+                    | [] -> FSharp.Data.Sql.Common.Utilities.parseAggregates fieldNotation fieldNotationAlias sqlQuery.AggregateOp
+                    | g  -> let items = g |> List.map(snd) |> List.concat
+                            let res = FSharp.Data.Sql.Common.Utilities.parseAggregates fieldNotation fieldNotationAlias items |> List.toSeq
+                            [selectcolumns + ", " + String.Join(", ", res)] // ToDo: GroupBy: do we want select columns also?
                 match extracolumns with
                 | [] -> selectcolumns
                 | h::t -> h
@@ -660,6 +664,12 @@ type internal MSSqlServerProvider() =
                             primaryKey
                         ))))
 
+            let groupByBuilder() =
+                sqlQuery.Grouping |> List.map(fst) |> List.concat
+                |> List.iteri(fun i (alias,column) ->
+                    if i > 0 then ~~ ", "
+                    ~~ (sprintf "[%s].[%s]" alias column))
+
             let orderByBuilder() =
                 sqlQuery.Ordering
                 |> List.iteri(fun i (alias,column,desc) ->
@@ -685,6 +695,12 @@ type internal MSSqlServerProvider() =
                 ~~"WHERE "
                 filterBuilder f
 
+            // GROUP BY
+            if sqlQuery.Grouping.Length > 0 then
+                ~~" GROUP BY "
+                groupByBuilder()
+
+            // ORDER BY
             if sqlQuery.Ordering.Length > 0 then
                 ~~"ORDER BY "
                 orderByBuilder()

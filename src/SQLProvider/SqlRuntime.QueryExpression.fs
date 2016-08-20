@@ -178,9 +178,18 @@ module internal QueryExpressionTransformer =
         let (projectionDelegate,projectionColumns) =
             let param = Expression.Parameter(typeof<SqlEntity>,"result")
             match sqlQuery.Projection with
-            | Some(proj) -> let newProjection, projectionMap = transform proj entityIndex param sqlQuery.Aliases sqlQuery.UltimateChild
-                            QueryEvents.PublishExpression newProjection
-                            (Expression.Lambda( (newProjection :?> LambdaExpression).Body,param).Compile(),projectionMap)
+            | Some(proj) when not(sqlQuery.Grouping.IsEmpty) -> 
+                
+                // Todo: GroupBy: If there is into-clause, we have to parse the aggregate somehow!
+
+                let pmap = Dictionary<string,string ResizeArray>()
+                pmap.Add(baseAlias, new ResizeArray<_>())
+                (Expression.Lambda(param,param).Compile(),pmap)
+
+            | Some(proj) -> 
+                let newProjection, projectionMap = transform proj entityIndex param sqlQuery.Aliases sqlQuery.UltimateChild
+                QueryEvents.PublishExpression newProjection
+                (Expression.Lambda( (newProjection :?> LambdaExpression).Body,param).Compile(),projectionMap)
             | None ->
                 // this case happens when there are only where clauses with a single table and a projection containing just the table's entire rows. example:
                 // for x in dc.john
