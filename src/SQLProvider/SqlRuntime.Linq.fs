@@ -15,12 +15,6 @@ open FSharp.Data.Sql.Schema
 type IWithDataContext =
     abstract DataContext : ISqlDataContext
 
-type GroupResultItems<'key, 'itm>(k, collection:seq<'itm>) =
-    inherit ResizeArray<'itm> (collection) 
-    member __.Values = collection
-    interface System.Linq.IGrouping<'key, 'itm> with
-         member __.Key = k
-
 module internal QueryImplementation =
     open System.Linq
     open System.Linq.Expressions
@@ -203,7 +197,7 @@ module internal QueryImplementation =
                             let foundItem =
                                 itms |> List.filter(fun ent -> ent.ColumnValues |> Seq.exists(fun (k,i) -> k = pairkey && i = pairval))
 
-                            GroupResultItems(unbox(pairval),foundItem) :> IGrouping<'TKey, SqlEntity>
+                            FSharp.Data.Sql.QueryExpression.QueryExpressionTransformer.GroupResultItems(unbox(pairval),foundItem) :> IGrouping<'TKey, SqlEntity>
                         ) |> List.toSeq
                     )
 
@@ -383,29 +377,36 @@ module internal QueryImplementation =
                         parseWhere meth source qual
                     | MethodCall(None, (MethodWithName "GroupBy" as meth),
                                     [ SourceWithQueryData source;
-                                      OptionalQuote (Lambda([ParamName sourceAlias],SqlColumnGet(sourceTi,sourceKey,_)) as lambda)]) ->
-
-                        let alias =
-                             match sourceTi with
-                             | "" when source.SqlExpression.HasAutoTupled() -> sourceAlias
-                             | "" -> ""
-                             | _ -> resolveTuplePropertyName sourceTi source.TupleIndex
+                                      OptionalQuote (Lambda([ParamName sourceAlias], exp) as lambda1)]) ->
+                        let lambda = lambda1 :?> LambdaExpression
 
                         let sourceEntity =
                             match source.SqlExpression with
                             | BaseTable(alias,sourceEntity) -> sourceEntity
                             | _ -> failwithf "Unexpected destination entity expression (%A)." source.SqlExpression
 
+                        let getAlias ti =
+                             match ti with
+                             | "" when source.SqlExpression.HasAutoTupled() -> sourceAlias
+                             | "" -> ""
+                             | _ -> resolveTuplePropertyName ti source.TupleIndex
+
+                        let keycols = 
+                            match exp with
+                            | SqlColumnGet(sourceTi,sourceKey,_) -> [getAlias sourceTi, sourceKey]
+                            | TupleSqlColumnsGet itms -> itms |> List.map(fun (ti,key,typ) -> getAlias ti, key)
+                            | _ -> []
+
                         // ToDo: GroupBy: We have to parse the key and aggregate columns!
                         let data =  {
                             PrimaryTable = sourceEntity
-                            KeyColumns = [sourceKey]
-                            AggregateColumns = [CountOp,alias,"City"]
+                            KeyColumns = keycols
+                            AggregateColumns = [] //[CountOp,alias,"City"]
                         }
                         let exp =
                             GroupBy(sourceEntity.Name,data,source.SqlExpression)
 
-                        let ty = typedefof<SqlGroupingQueryable<_,_>>.MakeGenericType(typeof<String>, meth.GetGenericArguments().[0])
+                        let ty = typedefof<SqlGroupingQueryable<_,_>>.MakeGenericType(lambda.ReturnType, meth.GetGenericArguments().[0])
                         let r = ty.GetConstructors().[0].Invoke [| source.DataContext; source.Provider; exp; source.TupleIndex;|]
                         let casted = unbox(r) :> IQueryable<IGrouping<_,_>>
                         casted :?> IQueryable<'T>

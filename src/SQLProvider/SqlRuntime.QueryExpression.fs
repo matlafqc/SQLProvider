@@ -9,6 +9,13 @@ open FSharp.Data.Sql.Patterns
 open FSharp.Data.Sql.Schema
 
 module internal QueryExpressionTransformer =
+
+    type GroupResultItems<'key, 'itm>(k, collection:seq<'itm>) =
+        inherit ResizeArray<'itm> (collection) 
+        member __.Values = collection
+        interface System.Linq.IGrouping<'key, 'itm> with
+             member __.Key = k
+
     let myLock = new Object();
     let getSubEntityMi =
         match <@ (Unchecked.defaultof<SqlEntity>).GetSubTable("", "") @> with

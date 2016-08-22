@@ -415,6 +415,17 @@ let ``simple select query with groupBy``() =
     Assert.AreEqual(6, query.["London"])
 
 [<Test; Ignore("Not Supported")>]
+let ``simple select query with groupBy2``() = 
+    let dc = sql.GetDataContext()
+    let query = 
+        query {
+            for cust in dc.Main.Customers do
+            groupBy (cust.City, cust.Country) into c
+            select (c.Key, c.Count()+1)
+        } |> dict  
+    Assert.IsNotNull(query)
+
+[<Test; Ignore("Not Supported")>]
 let ``simple select query with groupValBy``() = 
     let dc = sql.GetDataContext()
     let query = 

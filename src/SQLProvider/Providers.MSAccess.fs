@@ -289,9 +289,11 @@ type internal MSAccessProvider() =
 
                     match sqlQuery.Grouping with
                     | [] -> FSharp.Data.Sql.Common.Utilities.parseAggregates fieldNotation fieldNotationAlias sqlQuery.AggregateOp
-                    | g  -> let items = g |> List.map(snd) |> List.concat
-                            let res = FSharp.Data.Sql.Common.Utilities.parseAggregates fieldNotation fieldNotationAlias items |> List.toSeq
-                            [selectcolumns + ", " + String.Join(", ", res)] // ToDo: GroupBy: do we want select columns also?
+                    | g  -> 
+                        let keys = g |> List.map(fst) |> List.concat |> List.map(fieldNotation)
+                        let aggs = g |> List.map(snd) |> List.concat
+                        let res2 = FSharp.Data.Sql.Common.Utilities.parseAggregates fieldNotation fieldNotationAlias aggs |> List.toSeq
+                        [String.Join(", ", keys) + (match aggs with [] -> "" | _ -> ", ") + String.Join(", ", res2)] 
                 match extracolumns with
                 | [] when String.IsNullOrEmpty(selectcolumns) -> "*"
                 | [] -> selectcolumns

@@ -288,7 +288,7 @@ and LinkData =
 
 and internal GroupData =
     { PrimaryTable       : Table
-      KeyColumns         : string list
+      KeyColumns         : (alias * string) list
       AggregateColumns   : (Utilities.AggregateOperation * alias * string) list }
 
 and alias = string
@@ -379,8 +379,8 @@ and internal SqlQuery =
                     convert { q with Ordering = (legaliseName alias,key,desc)::q.Ordering } rest
                 | GroupBy(tablename,groupdata,rest) ->
                     convert { 
-                        q with Grouping = let f = groupdata.KeyColumns |> List.map (fun k -> legaliseName tablename, k)
-                                          let s = groupdata.AggregateColumns |> List.map (fun (op,alias,key) -> op, legaliseName tablename, key)
+                        q with Grouping = let f = groupdata.KeyColumns |> List.map (fun (a,k) -> legaliseName (match a<>"" with true -> a | false -> tablename), k)
+                                          let s = groupdata.AggregateColumns |> List.map (fun (op,a,key) -> op, legaliseName (match a<>"" with true -> a | false -> tablename), key)
                                           (f,s)::q.Grouping } rest
                 | Skip(amount, rest) ->
                     if q.Skip.IsSome then failwith "skip may only be specified once"

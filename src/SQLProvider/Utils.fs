@@ -24,7 +24,10 @@ module internal Utilities =
     
     let resolveTuplePropertyName (name:string) (tupleIndex:string ResizeArray) =
         // eg "Item1" -> tupleIndex.[0]
-        let itemid = (int <| name.Remove(0, 4))
+        let itemid = 
+            if name.Length > 4 then
+                (int <| name.Remove(0, 4))
+            else Int32.MaxValue
         if(tupleIndex.Count < itemid) then "tmp" + name
         else tupleIndex.[itemid - 1]
 
