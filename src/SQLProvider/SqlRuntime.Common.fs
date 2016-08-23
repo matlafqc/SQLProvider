@@ -184,6 +184,8 @@ type SqlEntity(dc: ISqlDataContext, tableName, columns: ColumnLookup) =
                     elif  k.StartsWith prefix4 then
                         let temp = replaceFirst k prefix4 ""
                         Some(temp,v)
+                    elif not(String.IsNullOrEmpty(k)) then // this is for dynamic alias columns: [a].[City] as City
+                        Some(k,v)
                     else None)
 
             e.ColumnValues
@@ -335,8 +337,8 @@ and internal SqlQuery =
       Links         : (alias * LinkData * alias) list
       Aliases       : Map<string, Table>
       Ordering      : (alias * string * bool) list
+      Projection    : Expression list
       Grouping      : (list<alias * string> * list<Utilities.AggregateOperation * alias * string>) list //key columns, aggregate columns
-      Projection    : Expression option
       Distinct      : bool
       UltimateChild : (string * Table) option
       Skip          : int option
@@ -345,7 +347,7 @@ and internal SqlQuery =
       AggregateOp   : (Utilities.AggregateOperation * alias * string) list }
     with
         static member Empty = { Filters = []; Links = []; Grouping = []; Aliases = Map.empty; Ordering = []; Count = false; AggregateOp = []
-                                Projection = None; Distinct = false; UltimateChild = None; Skip = None; Take = None }
+                                Projection = []; Distinct = false; UltimateChild = None; Skip = None; Take = None }
 
         static member ofSqlExp(exp,entityIndex: string ResizeArray) =
             let legaliseName (alias:alias) =
@@ -370,8 +372,7 @@ and internal SqlQuery =
                                          Links = (legaliseName a, link, legaliseName b) :: q.Links  } rest
                 | FilterClause(c,rest) ->  convert { q with Filters = (c)::q.Filters } rest
                 | Projection(exp,rest) ->
-                    if q.Projection.IsSome then failwith "the type provider only supports a single projection"
-                    else convert { q with Projection = Some exp } rest
+                    convert { q with Projection = exp::q.Projection } rest
                 | Distinct(rest) ->
                     if q.Distinct then failwith "distinct is applied to the entire query and can only be supplied once"
                     else convert { q with Distinct = true } rest

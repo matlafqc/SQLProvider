@@ -28,8 +28,9 @@ module internal Utilities =
             if name.Length > 4 then
                 (int <| name.Remove(0, 4))
             else Int32.MaxValue
-        if(tupleIndex.Count < itemid) then "tmp" + name
+        if(tupleIndex.Count < itemid) then ""
         else tupleIndex.[itemid - 1]
+
 
     let quoteWhiteSpace (str:String) = 
         (if str.Contains(" ") then sprintf "\"%s\"" str else str)

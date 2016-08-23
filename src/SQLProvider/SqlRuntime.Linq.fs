@@ -377,6 +377,17 @@ module internal QueryImplementation =
                         parseWhere meth source qual
                     | MethodCall(None, (MethodWithName "GroupBy" as meth),
                                     [ SourceWithQueryData source;
+                                      OptionalQuote (Lambda([ParamName sourceAlias], exp) as lambda1);
+                                      OptionalQuote (Lambda([ParamName sourceAlias2], exp2) as lambda2)]) ->
+                        // ToDo: GroupBy: template for groupByVal. Not working yet, just copied from GroupBy. That should be done first.
+                        let lambda = lambda1 :?> LambdaExpression
+                        let ty = typedefof<SqlGroupingQueryable<_,_>>.MakeGenericType(lambda.ReturnType, meth.GetGenericArguments().[0])
+                        let r = ty.GetConstructors().[0].Invoke [| source.DataContext; source.Provider; exp; source.TupleIndex;|]
+                        let casted = unbox(r) :> IQueryable<IGrouping<_,_>>
+                        casted :?> IQueryable<'T>
+
+                    | MethodCall(None, (MethodWithName "GroupBy" as meth),
+                                    [ SourceWithQueryData source;
                                       OptionalQuote (Lambda([ParamName sourceAlias], exp) as lambda1)]) ->
                         let lambda = lambda1 :?> LambdaExpression
 
@@ -576,7 +587,7 @@ module internal QueryImplementation =
 
                     | MethodCall(None, (MethodWithName "Select"), [ SourceWithQueryData source; OptionalQuote (Lambda([ v1 ], _) as lambda) ]) as whole ->
                         let ty = typedefof<SqlQueryable<_>>.MakeGenericType((lambda :?> LambdaExpression).ReturnType )
-                        if v1.Name.StartsWith "_arg" then
+                        if v1.Name.StartsWith "_arg" && v1.Type <> typeof<SqlEntity> then
                             // this is the projection from a join - ignore
                             ty.GetConstructors().[0].Invoke [| source.DataContext; source.Provider; source.SqlExpression; source.TupleIndex; |] :?> IQueryable<_>
                         else
