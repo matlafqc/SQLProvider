@@ -204,11 +204,6 @@ module internal QueryExpressionTransformer =
                 let pmap = Dictionary<string,string ResizeArray>()
                 pmap.Add(baseAlias, new ResizeArray<_>())
                 (Expression.Lambda(initDbParam,initDbParam).Compile(),pmap)
-            | [proj] -> // This branch is actually not needed anymore. It's just special case of the lower one.
-                let initDbParam = Expression.Parameter(typeof<SqlEntity>,"result")
-                let newProjection, projectionMap = transform proj entityIndex initDbParam sqlQuery.Aliases sqlQuery.UltimateChild (Dictionary<ParameterExpression, LambdaExpression>())
-                QueryEvents.PublishExpression newProjection
-                (Expression.Lambda( (newProjection :?> LambdaExpression).Body,initDbParam).Compile(),projectionMap)
             | projs -> 
                 let replaceParams = Dictionary<ParameterExpression, LambdaExpression>()
 
@@ -216,7 +211,22 @@ module internal QueryExpressionTransformer =
                 // But currently SQL will always return a list of SqlEntities.
 
                 let initDbParam = 
-                    Expression.Parameter(typeof<SqlEntity>,"result")
+                    // Usually it's just SqlEntity but it can be also tuple in joins etc.
+                    let rec foundInitParamType : Expression -> ParameterExpression = function
+                        | :? LambdaExpression as lambda when lambda.Parameters.Count = 1 ->
+                            let t = lambda.Parameters.[0].Type
+                            Expression.Parameter(lambda.Parameters.[0].Type,"result")
+                        | :? MethodCallExpression as meth when meth.Arguments.Count = 1 ->
+                            Expression.Parameter(meth.Arguments.[0].Type,"result")
+                        | :? UnaryExpression as ce -> 
+                            foundInitParamType ce.Operand
+                        | _ -> Expression.Parameter(typeof<SqlEntity>,"result")
+
+                    match projs.Head with
+                    // We have this wrap and the lambda is the second argument:
+                    | :? MethodCallExpression as meth when meth.Arguments.Count = 2 ->
+                        foundInitParamType meth.Arguments.[1]
+                    | _ -> foundInitParamType projs.Head
 
                 // Multiple projections found. We need to do a function composition: prevProj >> currentProj
                 // for Lamda Expressions. So this is an expression tree visitor.
