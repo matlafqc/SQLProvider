@@ -1,16 +1,22 @@
 (*** hide ***)
-#I @"../../files/sqlite"
-(*** hide ***)
 #I "../../../bin"
 (*** hide ***)
 [<Literal>]
-let connectionString = "Data Source=" + __SOURCE_DIRECTORY__ + @"\northwindEF.db;Version=3"
+let connectionString = "Data Source=" + __SOURCE_DIRECTORY__ + @"/../../../tests/SqlProvider.Tests/scripts/northwindEF.db;Version=3"
 (*** hide ***)
 [<Literal>]
-let resolutionPath = __SOURCE_DIRECTORY__ + @"..\..\..\files\sqlite"
+let resolutionPath = __SOURCE_DIRECTORY__ + @"/../../../tests/SqlProvider.Tests/libs"
 #r "FSharp.Data.SqlProvider.dll"
 open FSharp.Data.Sql
-
+(*** hide ***)
+type sql  = SqlDataProvider<
+                Common.DatabaseProviderTypes.SQLITE,
+                connectionString,
+                ResolutionPath = resolutionPath, 
+                CaseSensitivityChange = Common.CaseSensitivityChange.ORIGINAL
+            >
+(*** hide ***)
+let ctx = sql.GetDataContext()
 (**
 # Composable Queries
 
@@ -104,6 +110,9 @@ let companyNameFilter inUse queryable =
     queryable
 
 (**
+(Let's asume that your inUse some complex data: 
+ E.g. Your sub-queries would come from other functions. Basic booleans you can just include to your where-clause)
+
 Then you can create the main query
 *)
 let query1 =
