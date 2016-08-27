@@ -289,6 +289,7 @@ module internal QueryImplementation =
                     | _ -> None
 
                 let rec filterExpression (exp:Expression)  =
+                    let exp = ExpressionOptimizer.doReduction exp
                     let extendFilter conditions nextFilter =
                         match exp with
                         | AndAlso(_) -> And(conditions,nextFilter)
@@ -305,6 +306,12 @@ module internal QueryImplementation =
                         extendFilter [c1;c2] None
                     | Condition(cond) ->
                         Condition.And([cond],None)
+
+                    // Support for simple boolean expressions:
+                    | AndAlso(Bool(b), x) | AndAlso(x, Bool(b)) when b = true -> filterExpression x
+                    | OrElse(Bool(b), x) | OrElse(x, Bool(b)) when b = false -> filterExpression x
+                    | Bool(b) when b -> Condition.ConstantTrue
+                    | Bool(b) when not(b) -> Condition.ConstantFalse
                     | _ -> failwith ("Unsupported expression. Ensure all server-side objects appear on the left hand side of predicates.  The In and Not In operators only support the inline array syntax. " + exp.ToString())
 
                 match qual with

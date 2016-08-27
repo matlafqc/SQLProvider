@@ -1,3 +1,13 @@
+### 1.0.30 - 27.08.2016
+* Oracle performance improvements
+* Postgre nullable insert fix
+* SQL generation improvements
+* MsAccess fix
+
+### 1.0.29 - 23.08.2016
+* Support for composite (multi-key-column) table joins
+* Support for let-keywords
+
 ### 1.0.28 - 19.08.2016
 * Configuration error info improvements
 
@@ -92,7 +102,10 @@
 * Async operations (PR #257)
 
 ### 1.0.0 - 16.04.2016
-* Support for multiple owners on postgres (PR #189)
+* CRUD in Access (PR #211)
+* Better error handling (PR #233)
+* Better thread synchronisation (PR #222)
+* General bug fixes
 * V1 release
 
 ### 0.0.11-alpha - 02.01.2016
