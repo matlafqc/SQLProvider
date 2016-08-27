@@ -71,25 +71,18 @@ module internal Utilities =
             let transaction = typeof<System.Transactions.TransactionScope>.GetConstructor [|asynctype|]
             transaction.Invoke [|1|] :?> System.Transactions.TransactionScope
 
-    type internal AggregateOperation =
-    | Max
-    | Min
-    | Sum
-    | Avg
-    | CountOp
-
     let parseAggregates fieldNotation fieldNotationAlias query =
         let rec parseAggregates' fieldNotation fieldNotationAlias query (selectColumns:string list) =
             match query with
             | [] -> selectColumns
             | (agop, opAlias, sumCol)::tail ->
                 let aggregate = 
-                    match agop with
-                    | Sum -> "SUM"
-                    | Max -> "MAX"
-                    | Min -> "MIN"
-                    | Avg -> "AVG"
-                    | CountOp -> "COUNT"
+                    match (agop) with
+                    | FSharp.Data.Sql.AggregateOperation.Sum -> "SUM"
+                    | FSharp.Data.Sql.AggregateOperation.Max -> "MAX"
+                    | FSharp.Data.Sql.AggregateOperation.Min -> "MIN"
+                    | FSharp.Data.Sql.AggregateOperation.Avg -> "AVG"
+                    | FSharp.Data.Sql.AggregateOperation.CountOp -> "COUNT"
                 let parsed = 
                          (aggregate + "(" + fieldNotation(opAlias, sumCol) + ") as " + fieldNotationAlias(sumCol, aggregate)) :: selectColumns
                 parseAggregates' fieldNotation fieldNotationAlias tail parsed

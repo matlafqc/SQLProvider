@@ -385,7 +385,7 @@ module internal QueryImplementation =
                     | MethodCall(None, (MethodWithName "GroupBy" as meth),
                                     [ SourceWithQueryData source;
                                       OptionalQuote (Lambda([ParamName sourceAlias], exp) as lambda1);
-                                      OptionalQuote (Lambda([ParamName sourceAlias2], exp2) as lambda2)]) ->
+                                      OptionalQuote (Lambda([ParamName destAlias], exp2) as lambda2)]) ->
                         // ToDo: GroupBy: template for groupByVal. Not working yet, just copied from GroupBy. That should be done first.
                         let lambda = lambda1 :?> LambdaExpression
                         let ty = typedefof<SqlGroupingQueryable<_,_>>.MakeGenericType(lambda.ReturnType, meth.GetGenericArguments().[0])
@@ -422,7 +422,7 @@ module internal QueryImplementation =
                             AggregateColumns = [] //[CountOp,alias,"City"]
                         }
                         let exp =
-                            GroupBy(sourceEntity.Name,data,source.SqlExpression)
+                            SelectMany(sourceEntity.Name,"grp",GroupQuery(data),source.SqlExpression)
 
                         let ty = typedefof<SqlGroupingQueryable<_,_>>.MakeGenericType(lambda.ReturnType, meth.GetGenericArguments().[0])
                         let r = ty.GetConstructors().[0].Invoke [| source.DataContext; source.Provider; exp; source.TupleIndex;|]
@@ -446,7 +446,7 @@ module internal QueryImplementation =
                                 let data = { PrimaryKey = [destKey]; PrimaryTable = destEntity; ForeignKey = [sourceKey]; ForeignTable = entity; OuterJoin = false; RelDirection = RelationshipDirection.Parents}
                                 if source.TupleIndex.Any(fun v -> v = sourceAlias) |> not then source.TupleIndex.Add(sourceAlias)
                                 if source.TupleIndex.Any(fun v -> v = destAlias) |> not then source.TupleIndex.Add(destAlias)
-                                SelectMany(sourceAlias,destAlias, data,BaseTable(sourceAlias,entity))
+                                SelectMany(sourceAlias,destAlias, LinkQuery(data),BaseTable(sourceAlias,entity))
                             | _ ->
                                 let sourceAlias = if sourceTi <> "" then Utilities.resolveTuplePropertyName sourceTi source.TupleIndex else sourceAlias
                                 if source.TupleIndex.Any(fun v -> v = sourceAlias) |> not then source.TupleIndex.Add(sourceAlias)
@@ -456,7 +456,7 @@ module internal QueryImplementation =
                                 let data = { PrimaryKey = [destKey]; PrimaryTable = destEntity; ForeignKey = [sourceKey];
                                              ForeignTable = {Schema="";Name="";Type=""};
                                              OuterJoin = false; RelDirection = RelationshipDirection.Parents }
-                                SelectMany(sourceAlias,destAlias,data,source.SqlExpression)
+                                SelectMany(sourceAlias,destAlias,LinkQuery(data),source.SqlExpression)
 
                         let ty =
                             match projection with
@@ -482,7 +482,7 @@ module internal QueryImplementation =
                                 let data = { PrimaryKey = destKeys; PrimaryTable = destEntity; ForeignKey = sourceKeys; ForeignTable = entity; OuterJoin = false; RelDirection = RelationshipDirection.Parents}
                                 if source.TupleIndex.Any(fun v -> v = sourceAlias) |> not then source.TupleIndex.Add(sourceAlias)
                                 if source.TupleIndex.Any(fun v -> v = destAlias) |> not then source.TupleIndex.Add(destAlias)
-                                SelectMany(sourceAlias,destAlias, data,BaseTable(sourceAlias,entity))
+                                SelectMany(sourceAlias,destAlias, LinkQuery(data),BaseTable(sourceAlias,entity))
                             | _ ->
                                 let sourceTi = multisource |> List.tryPick(fun(ti,_,_)->match ti with "" -> None | x -> Some x)
                                 let sourceAlias = match sourceTi with None -> sourceAlias | Some x -> Utilities.resolveTuplePropertyName x source.TupleIndex
@@ -493,7 +493,7 @@ module internal QueryImplementation =
                                 let data = { PrimaryKey = destKeys; PrimaryTable = destEntity; ForeignKey = sourceKeys;
                                              ForeignTable = {Schema="";Name="";Type=""};
                                              OuterJoin = false; RelDirection = RelationshipDirection.Parents }
-                                SelectMany(sourceAlias,destAlias,data,source.SqlExpression)
+                                SelectMany(sourceAlias,destAlias,LinkQuery(data),source.SqlExpression)
 
                         let ty =
                             match projection with
@@ -520,6 +520,18 @@ module internal QueryImplementation =
                             | MethodCall(None, (MethodWithName "SelectMany"), [ createRelated ; OptionalQuote (Lambda([_], inner)); OptionalQuote (Lambda(projectionParams,_)) ]) ->
                                 let outExp = processSelectManys projectionParams.[0].Name createRelated outExp
                                 processSelectManys projectionParams.[1].Name inner outExp
+                            | MethodCall(None, (MethodWithName "GroupBy"),
+                                                    [createRelated
+                                                     ConvertOrTypeAs(MethodCall(Some(Lambda(_,MethodCall(_,MethodWithName "CreateEntities",[String destEntity]))),(MethodWithName "Invoke"),_))
+                                                     OptionalQuote (Lambda([ParamName sourceAlias],SqlColumnGet(sourceTi,sourceKey,_)))
+                                                     OptionalQuote (Lambda([ParamName destAlias],SqlColumnGet(_,destKey,_)))
+                                                     OptionalQuote (Lambda(projectionParams,_))])
+                            | MethodCall(None, (MethodWithName "GroupBy"),
+                                                    [createRelated
+                                                     ConvertOrTypeAs(MethodCall(_, (MethodWithName "CreateEntities"), [String destEntity] ))
+                                                     OptionalQuote (Lambda([ParamName sourceAlias],SqlColumnGet(sourceTi,sourceKey,_)))
+                                                     OptionalQuote (Lambda([ParamName destAlias],SqlColumnGet(_,destKey,_)))
+                                                     OptionalQuote (Lambda(projectionParams,_))])
                             | MethodCall(None, (MethodWithName "Join"),
                                                     [createRelated
                                                      ConvertOrTypeAs(MethodCall(Some(Lambda(_,MethodCall(_,MethodWithName "CreateEntities",[String destEntity]))),(MethodWithName "Invoke"),_))
@@ -544,7 +556,7 @@ module internal QueryImplementation =
                                 let data = { PrimaryKey = [destKey]; PrimaryTable = Table.FromFullName destEntity; ForeignKey = [sourceKey];
                                                 ForeignTable = {Schema="";Name="";Type=""};
                                                 OuterJoin = false; RelDirection = RelationshipDirection.Parents }
-                                SelectMany(sourceAlias,destAlias,data,outExp)
+                                SelectMany(sourceAlias,destAlias,LinkQuery(data),outExp)
                             | OptionalOuterJoin(outerJoin,MethodCall(Some(_),(MethodWithName "CreateRelated"), [param; _; String PE; String PK; String FE; String FK; RelDirection dir;])) ->
                                 let fromAlias =
                                     match param with
@@ -556,9 +568,9 @@ module internal QueryImplementation =
                                     match outExp with
                                     | BaseTable(alias,entity) when alias = "" ->
                                         // special case here as above - this is the first call so replace the top of the tree here with the current base entity alias and the select many
-                                        SelectMany(fromAlias,toAlias,data,BaseTable(alias,entity))
+                                        SelectMany(fromAlias,toAlias,LinkQuery(data),BaseTable(alias,entity))
                                     | _ ->
-                                        SelectMany(fromAlias,toAlias,data,outExp)
+                                        SelectMany(fromAlias,toAlias,LinkQuery(data),outExp)
                                 // add new aliases to the tuple index
                                 if source.TupleIndex.Any(fun v -> v = fromAlias) |> not then source.TupleIndex.Add(fromAlias)
                                 if source.TupleIndex.Any(fun v -> v = toAlias) |> not then  source.TupleIndex.Add(toAlias)
@@ -586,7 +598,7 @@ module internal QueryImplementation =
                                 let data = { PrimaryKey = destKeys; PrimaryTable = Table.FromFullName destEntity; ForeignKey = sourceKeys;
                                                 ForeignTable = {Schema="";Name="";Type=""};
                                                 OuterJoin = false; RelDirection = RelationshipDirection.Parents }
-                                SelectMany(sourceAlias,destAlias,data,outExp)
+                                SelectMany(sourceAlias,destAlias,LinkQuery(data),outExp)
                             | _ -> failwith ("Unknown: " + inExp.ToString())
 
                         let ex = processSelectManys projectionParams.[1].Name inner source.SqlExpression

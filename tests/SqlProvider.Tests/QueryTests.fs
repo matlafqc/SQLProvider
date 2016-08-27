@@ -447,7 +447,7 @@ let ``simplest select query with groupBy``() =
         } |> Seq.toArray
     Assert.IsNotEmpty(query)
 
-[<Test; Ignore("Not Supported")>]
+[<Test>]
 let ``simple select query with groupBy``() = 
     let dc = sql.GetDataContext()
     let query = 
@@ -469,7 +469,7 @@ let ``simple select query with groupBy2``() =
         } |> dict  
     Assert.IsNotNull(query)
 
-[<Test; Ignore("Not Supported")>]
+[<Test>]
 let ``simple select query with groupValBy``() = 
     let dc = sql.GetDataContext()
     let query = 
@@ -630,7 +630,7 @@ let ``simple select query with join using relationships``() =
             "VICTE", new DateTime(1996,7,8)
         |], query.[0..3])
 
-[<Test; Ignore("Not Supported")>]
+[<Test>]
 let ``simple select query with group join``() = 
     let dc = sql.GetDataContext()
     let query = 
