@@ -220,6 +220,8 @@ module internal QueryExpressionTransformer =
                 // But currently SQL will always return a list of SqlEntities.
 
                 let initDbParam = 
+                    // Todo: GroupBy: The current join breaks here, as it fakes anonymous object to be SqlEntity by skipping projection lambda.
+
                     // Usually it's just SqlEntity but it can be also tuple in joins etc.
                     let rec foundInitParamType : Expression -> ParameterExpression = function
                         | :? LambdaExpression as lambda when lambda.Parameters.Count = 1 ->

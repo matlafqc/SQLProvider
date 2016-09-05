@@ -524,15 +524,33 @@ module internal QueryImplementation =
                             | MethodCall(None, (MethodWithName "GroupBy"),
                                                     [createRelated
                                                      ConvertOrTypeAs(MethodCall(Some(Lambda(_,MethodCall(_,MethodWithName "CreateEntities",[String destEntity]))),(MethodWithName "Invoke"),_))
-                                                     OptionalQuote (Lambda([ParamName sourceAlias],SqlColumnGet(sourceTi,sourceKey,_)))
-                                                     OptionalQuote (Lambda([ParamName destAlias],SqlColumnGet(_,destKey,_)))
+                                                     OptionalQuote (Lambda([ParamName sourceAlias], exp) as lambda1)
                                                      OptionalQuote (Lambda(projectionParams,_))])
                             | MethodCall(None, (MethodWithName "GroupBy"),
                                                     [createRelated
                                                      ConvertOrTypeAs(MethodCall(_, (MethodWithName "CreateEntities"), [String destEntity] ))
-                                                     OptionalQuote (Lambda([ParamName sourceAlias],SqlColumnGet(sourceTi,sourceKey,_)))
-                                                     OptionalQuote (Lambda([ParamName destAlias],SqlColumnGet(_,destKey,_)))
-                                                     OptionalQuote (Lambda(projectionParams,_))])
+                                                     OptionalQuote (Lambda([ParamName sourceAlias], exp) as lambda1)
+                                                     OptionalQuote (Lambda(projectionParams,_))]) ->
+
+                                let outExp = processSelectManys projectionParams.[0].Name createRelated outExp
+
+                                let getAlias ti =
+                                     match ti with
+                                     | "" when source.SqlExpression.HasAutoTupled() -> sourceAlias
+                                     | "" -> ""
+                                     | _ -> resolveTuplePropertyName ti source.TupleIndex
+
+                                let keycols = 
+                                    match exp with
+                                    | SqlColumnGet(sourceTi,sourceKey,_) -> [getAlias sourceTi, sourceKey]
+                                    | TupleSqlColumnsGet itms -> itms |> List.map(fun (ti,key,typ) -> getAlias ti, key)
+                                    | _ -> []
+
+                                let data = {  PrimaryTable = Table.FromFullName destEntity; 
+                                               KeyColumns = keycols;
+                                               AggregateColumns = []; // Todo: GroupBy: Fetch aggregation cols here!
+                                           }
+                                SelectMany(sourceAlias,"grp", GroupQuery(data),outExp)
                             | MethodCall(None, (MethodWithName "Join"),
                                                     [createRelated
                                                      ConvertOrTypeAs(MethodCall(Some(Lambda(_,MethodCall(_,MethodWithName "CreateEntities",[String destEntity]))),(MethodWithName "Invoke"),_))
