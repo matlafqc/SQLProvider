@@ -28,6 +28,24 @@ type CaseSensitivityChange =
     | TOUPPER = 1
     | TOLOWER = 2
 
+type OdbcQuoteCharacter =
+    | DEFAULT_QUOTE = 0
+    /// MySQL/Postgre style: `alias` 
+    | GRAVE_ACCENT = 1
+    /// Microsoft SQL style: [alias]
+    | SQUARE_BRACKETS = 2
+    /// Plain, no special names: alias
+    | NO_QUOTES = 3 // alias
+    /// Amazon Redshift style: "alias"
+    | DOUBLE_QUOTES = 4
+    /// Single quote: 'alias'
+    | APHOSTROPHE = 5 
+
+type SQLiteLibrary =
+    | SystemDataSQLite = 0
+    | MonoDataSQLite = 1
+    | AutoSelect = 2
+
 module public QueryEvents =
    let private expressionEvent = new Event<System.Linq.Expressions.Expression>()
    let private sqlEvent = new Event<string>()

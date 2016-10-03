@@ -212,7 +212,7 @@ module internal Oracle =
         |> read conn (fun row -> 
             let pkName     = Sql.dbUnbox row.[0]
             let tableName  = Sql.dbUnbox row.[1]
-            let columnName = Sql.dbUnbox row.[2]
+            let columnName = [Sql.dbUnbox row.[2]]
             let indexName  = Sql.dbUnbox row.[3]
             tableName, { PrimaryKey.Name = pkName
                          Table = tableName
@@ -504,7 +504,7 @@ type internal OracleProvider(resolutionPath, owner, referencedAssemblies, tableN
                 (entity.Table.FullName)
                 (String.Join(",", columns))
                 (String.Join(",", parameters |> Array.map (fun p -> p.ParameterName))))
-            ~~(String.Join(" AND ", ks |> List.mapi(fun i k -> (sprintf "%s = :pk%i" k i))))
+            ~~(String.Join(" AND ", ks |> List.mapi(fun i k -> (sprintf "\"%s\" = :pk%i" k i))))
 
         let cmd = provider.CreateCommand(con, sb.ToString())
         parameters |> Array.iter (cmd.Parameters.Add >> ignore)

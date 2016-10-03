@@ -1,3 +1,13 @@
+### 1.0.34 - 04.10.2016
+* Fix for contains search
+
+### 1.0.33 - 16.09.2016
+* Fix for primary key discovery on oracle #331
+
+### 1.0.32 - 05.09.2016
+* SQLite text-format date comparison fix #328
+* Odbc quote characters option #327
+
 ### 1.0.31 - 27.08.2016
 * Where-clause optimization and fix
 

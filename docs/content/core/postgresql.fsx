@@ -82,10 +82,11 @@ if it is null in the database.
 
 let [<Literal>] useOptTypes  = true
 
-let sql =
+type sql =
     SqlDataProvider<
         dbVendor,
         connString,
+        "",         //ConnectionNameString can be left empty 
         resPath,
         indivAmount,
         useOptTypes>
