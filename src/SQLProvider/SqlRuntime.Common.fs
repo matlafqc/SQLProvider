@@ -334,7 +334,6 @@ and internal SqlExp =
     | Distinct     of SqlExp                             // distinct indicator
     | OrderBy      of alias * string * bool * SqlExp     // alias and column name, bool indicates ascending sort
     | Union        of bool * string * SqlExp             // true = "union all", false = "union", and subquery
-    | GroupBy      of alias * GroupData * SqlExp         // alias and column names
     | Skip         of int * SqlExp
     | Take         of int * SqlExp
     | Count        of SqlExp
@@ -347,7 +346,6 @@ and internal SqlExp =
                 | Projection(_,rest)
                 | Distinct rest
                 | OrderBy(_,_,_,rest)
-                | GroupBy(_,_,rest)
                 | Skip(_,rest)
                 | Take(_,rest)
                 | Union(_,_,rest)
@@ -395,8 +393,14 @@ and internal SqlQuery =
                          convert { q with Aliases = q.Aliases.Add(legaliseName a,link.ForeignTable).Add(legaliseName b,link.PrimaryTable);
                                          Links = (legaliseName a, link, legaliseName b) :: q.Links  } rest
                    | GroupQuery(grp) ->
-                         convert { q with Aliases = q.Aliases.Add(legaliseName a,grp.PrimaryTable).Add(legaliseName b,grp.PrimaryTable);
-                                         Links = q.Links  } rest
+                         convert { q with 
+                                    Aliases = q.Aliases.Add(legaliseName a,grp.PrimaryTable).Add(legaliseName b,grp.PrimaryTable);
+                                    Links = q.Links  
+                                    Grouping = 
+                                        let baseAlias:alias = grp.PrimaryTable.Name
+                                        let f = grp.KeyColumns |> List.map (fun (a,k) -> legaliseName (match a<>"" with true -> a | false -> baseAlias), k)
+                                        let s = grp.AggregateColumns |> List.map (fun (op,a,key) -> op, legaliseName (match a<>"" with true -> a | false -> baseAlias), key)
+                                        (f,s)::q.Grouping } rest
                 | FilterClause(c,rest) ->  convert { q with Filters = (c)::q.Filters } rest
                 | Projection(exp,rest) ->
                     convert { q with Projection = exp::q.Projection } rest
@@ -405,11 +409,6 @@ and internal SqlQuery =
                     else convert { q with Distinct = true } rest
                 | OrderBy(alias,key,desc,rest) ->
                     convert { q with Ordering = (legaliseName alias,key,desc)::q.Ordering } rest
-                | GroupBy(tablename,groupdata,rest) ->
-                    convert { 
-                        q with Grouping = let f = groupdata.KeyColumns |> List.map (fun (a,k) -> legaliseName (match a<>"" with true -> a | false -> tablename), k)
-                                          let s = groupdata.AggregateColumns |> List.map (fun (op,a,key) -> op, legaliseName (match a<>"" with true -> a | false -> tablename), key)
-                                          (f,s)::q.Grouping } rest
                 | Skip(amount, rest) ->
                     if q.Skip.IsSome then failwith "skip may only be specified once"
                     else convert { q with Skip = Some(amount) } rest

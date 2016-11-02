@@ -29,21 +29,38 @@ module internal QueryImplementation =
     let (|SourceWithQueryData|_|) = function Constant ((:? IWithSqlService as org), _)    -> Some org | _ -> None
     let (|RelDirection|_|)        = function Constant ((:? RelationshipDirection as s),_) -> Some s   | _ -> None
 
+    let parseResults (projector:Delegate) (results:SqlEntity[]) =
+        let args = projector.GetType().GenericTypeArguments
+        seq { 
+            // Todo: GroupBy: How do we read group-by results?
+            if args.Length > 0 && args.[0].Name.StartsWith("IGrouping") then
+                // do group-read
+                let collected = 
+                    results |> Seq.map(fun e ->
+                        let data = e.ColumnValues
+                        let keyname, keyvalue = data.First()
+                        let grp = FSharp.Data.Sql.QueryExpression.QueryExpressionTransformer.GroupResultItems(keyvalue.ToString(),[e]) :> IGrouping<_, _>
+                        grp)
+                for e in collected -> projector.DynamicInvoke(e) 
+            else
+                for e in results -> projector.DynamicInvoke(e) 
+        } |> Seq.cache :> System.Collections.IEnumerable
+
     let executeQuery (dc:ISqlDataContext) (provider:ISqlProvider) sqlExp ti =
-       use con = provider.CreateConnection(dc.ConnectionString)
-       let (query,parameters,projector,baseTable) = QueryExpressionTransformer.convertExpression sqlExp ti con provider
-       let paramsString = parameters |> Seq.fold (fun acc p -> acc + (sprintf "%s - %A; " p.ParameterName p.Value)) ""
-       Common.QueryEvents.PublishSqlQuery (sprintf "%s - params %s" query paramsString)
-       // todo: make this lazily evaluated? or optionally so. but have to deal with disposing stuff somehow
-       use cmd = provider.CreateCommand(con,query)
-       for p in parameters do cmd.Parameters.Add p |> ignore
-       let columns = provider.GetColumns(con, baseTable)
-       if con.State <> ConnectionState.Open then con.Open()
-       use reader = cmd.ExecuteReader()
-       let results = dc.ReadEntities(baseTable.FullName, columns, reader)
-       let results = seq { for e in results -> projector.DynamicInvoke(e) } |> Seq.cache :> System.Collections.IEnumerable
-       if (provider.GetType() <> typeof<Providers.MSAccessProvider>) then con.Close() //else get 'COM object that has been separated from its underlying RCW cannot be used.'
-       results
+        use con = provider.CreateConnection(dc.ConnectionString)
+        let (query,parameters,projector,baseTable) = QueryExpressionTransformer.convertExpression sqlExp ti con provider
+        let paramsString = parameters |> Seq.fold (fun acc p -> acc + (sprintf "%s - %A; " p.ParameterName p.Value)) ""
+        Common.QueryEvents.PublishSqlQuery (sprintf "%s - params %s" query paramsString)
+        // todo: make this lazily evaluated? or optionally so. but have to deal with disposing stuff somehow
+        use cmd = provider.CreateCommand(con,query)
+        for p in parameters do cmd.Parameters.Add p |> ignore
+        let columns = provider.GetColumns(con, baseTable)
+        if con.State <> ConnectionState.Open then con.Open()
+        use reader = cmd.ExecuteReader()
+        let results = dc.ReadEntities(baseTable.FullName, columns, reader)
+        let results = parseResults projector results
+        if (provider.GetType() <> typeof<Providers.MSAccessProvider>) then con.Close() //else get 'COM object that has been separated from its underlying RCW cannot be used.'
+        results
 
     let executeQueryAsync (dc:ISqlDataContext) (provider:ISqlProvider) sqlExp ti =
        async {
@@ -59,7 +76,7 @@ module internal QueryImplementation =
                 do! con.OpenAsync() |> Async.AwaitIAsyncResult |> Async.Ignore
            use! reader = cmd.ExecuteReaderAsync() |> Async.AwaitTask
            let! results = dc.ReadEntitiesAsync(baseTable.FullName, columns, reader)
-           let results = seq { for e in results -> projector.DynamicInvoke(e) } |> Seq.cache :> System.Collections.IEnumerable
+           let results = parseResults projector results
            if (provider.GetType() <> typeof<Providers.MSAccessProvider>) then con.Close() //else get 'COM object that has been separated from its underlying RCW cannot be used.'
            return results
        }
@@ -166,7 +183,8 @@ module internal QueryImplementation =
 
     and SqlGroupingQueryable<'TKey, 'TEntity>(dc:ISqlDataContext,provider,sqlQuery,tupleIndex) =
         static member Create(table,conString,provider) =
-            SqlGroupingQueryable<'TKey, 'TEntity>(conString,provider,BaseTable("",table),ResizeArray<_>()) :> IQueryable<IGrouping<'TKey, 'TEntity>>
+            let res = SqlGroupingQueryable<'TKey, 'TEntity>(conString,provider,BaseTable("",table),ResizeArray<_>())
+            res :> IQueryable<IGrouping<'TKey, 'TEntity>>
         interface IQueryable<IGrouping<'TKey, 'TEntity>>
         interface IQueryable with
             member __.Provider = 
@@ -177,36 +195,9 @@ module internal QueryImplementation =
                 typeof<IGrouping<'TKey, 'TEntity>>
         interface seq<IGrouping<'TKey, 'TEntity>> with
              member __.GetEnumerator() = 
-                
-                let entityIndex = new ResizeArray<_>()
-                let qry = SqlQuery.ofSqlExp(sqlQuery,entityIndex)
-                let keys = qry.Grouping |> List.map(fun (keys,aggrs) -> keys) |> List.concat |> List.map snd |> Seq.distinct |> Seq.toList
-                let itms = executeQuery dc provider sqlQuery tupleIndex |> Seq.cast<SqlEntity> |> Seq.toList
-                
-                // ToDo: GroupBy: Now we create SQL-group-by-clause, then return results from SQL as SqlEntity-list
-                // and group "again" manually. Works, but maybe we could return something else than SqlEntity-list?
-
-                let keyCols = 
-                    keys |> List.map(fun keyItem ->
-                        let keyVal = 
-                            itms |> Seq.map(fun ent -> 
-                                ent.ColumnValues |> Seq.filter(fun (k,i) -> k = keyItem) 
-                                                 |> Seq.distinct) |> Seq.concat |> Seq.toList
-                        
-                        keyVal |> List.map(fun (pairkey, pairval) ->
-                            let foundItem =
-                                itms |> List.filter(fun ent -> ent.ColumnValues |> Seq.exists(fun (k,i) -> k = pairkey && i = pairval))
-
-                            FSharp.Data.Sql.QueryExpression.QueryExpressionTransformer.GroupResultItems(unbox(pairval),foundItem) :> IGrouping<'TKey, SqlEntity>
-                        ) |> List.toSeq
-                    )
-
-                match keys with
-                | [x] -> let casted = keyCols.[0] |> Seq.cast<IGrouping<'TKey, 'TEntity>>
-                         casted.GetEnumerator()
-                | [] -> Seq.empty.GetEnumerator()
-                | xs -> failwith("Multiple groupings not yet implemented.")
-
+                executeQuery dc provider sqlQuery tupleIndex
+                |> Seq.cast<IGrouping<'TKey, 'TEntity>>
+                |> fun res -> res.GetEnumerator()
         interface IEnumerable with
              member x.GetEnumerator() = 
                 let itms = (x :> seq<IGrouping<'TKey, 'TEntity>>)
@@ -383,17 +374,15 @@ module internal QueryImplementation =
 
                     | MethodCall(None, (MethodWithName "Where" as meth), [ SourceWithQueryData source; OptionalQuote qual ]) ->
                         parseWhere meth source qual
-                    | MethodCall(None, (MethodWithName "GroupBy" as meth),
+                    | MethodCall(None, (MethodWithName "GroupBy" | MethodWithName "GroupJoin" as meth),
                                     [ SourceWithQueryData source;
                                       OptionalQuote (Lambda([ParamName sourceAlias], exp) as lambda1);
-                                      OptionalQuote (Lambda([ParamName destAlias], exp2) as lambda2)]) ->
-                        // ToDo: GroupBy: template for groupByVal. Not working yet, just copied from GroupBy. That should be done first.
-                        let lambda = lambda1 :?> LambdaExpression
-                        let ty = typedefof<SqlGroupingQueryable<_,_>>.MakeGenericType(lambda.ReturnType, meth.GetGenericArguments().[0])
-                        let r = ty.GetConstructors().[0].Invoke [| source.DataContext; source.Provider; exp; source.TupleIndex;|]
-                        let casted = unbox(r) :> IQueryable<IGrouping<_,_>>
-                        casted :?> IQueryable<'T>
-
+                                      OptionalQuote (Lambda([ParamName _], _))
+                                      OptionalQuote (Lambda([ParamName _], _))]) 
+                    | MethodCall(None, (MethodWithName "GroupBy" | MethodWithName "GroupJoin" as meth),
+                                    [ SourceWithQueryData source;
+                                      OptionalQuote (Lambda([ParamName sourceAlias], exp) as lambda1);
+                                      OptionalQuote (Lambda([ParamName _], _))]) 
                     | MethodCall(None, (MethodWithName "GroupBy" as meth),
                                     [ SourceWithQueryData source;
                                       OptionalQuote (Lambda([ParamName sourceAlias], exp) as lambda1)]) ->
@@ -521,16 +510,24 @@ module internal QueryImplementation =
                             | MethodCall(None, (MethodWithName "SelectMany"), [ createRelated ; OptionalQuote (Lambda([_], inner)); OptionalQuote (Lambda(projectionParams,_)) ]) ->
                                 let outExp = processSelectManys projectionParams.[0].Name createRelated outExp
                                 processSelectManys projectionParams.[1].Name inner outExp
-                            | MethodCall(None, (MethodWithName "GroupBy"),
+                            | MethodCall(None, (MethodWithName "GroupBy" | MethodWithName "GroupJoin" as meth),
                                                     [createRelated
                                                      ConvertOrTypeAs(MethodCall(Some(Lambda(_,MethodCall(_,MethodWithName "CreateEntities",[String destEntity]))),(MethodWithName "Invoke"),_))
                                                      OptionalQuote (Lambda([ParamName sourceAlias], exp) as lambda1)
-                                                     OptionalQuote (Lambda(projectionParams,_))])
-                            | MethodCall(None, (MethodWithName "GroupBy"),
+                                                     OptionalQuote (Lambda(_,_))])
+                            | MethodCall(None, (MethodWithName "GroupBy" | MethodWithName "GroupJoin" as meth),
                                                     [createRelated
                                                      ConvertOrTypeAs(MethodCall(_, (MethodWithName "CreateEntities"), [String destEntity] ))
                                                      OptionalQuote (Lambda([ParamName sourceAlias], exp) as lambda1)
-                                                     OptionalQuote (Lambda(projectionParams,_))]) ->
+                                                     OptionalQuote (Lambda(_,_))]) 
+                            | MethodCall(None, (MethodWithName "GroupBy" | MethodWithName "GroupJoin" as meth),
+                                                    [createRelated
+                                                     ConvertOrTypeAs(MethodCall(Some(Lambda(_,MethodCall(_,MethodWithName "CreateEntities",[String destEntity]))),(MethodWithName "Invoke"),_))
+                                                     OptionalQuote (Lambda([ParamName sourceAlias], exp) as lambda1)])
+                            | MethodCall(None, (MethodWithName "GroupBy" | MethodWithName "GroupJoin" as meth),
+                                                    [createRelated
+                                                     ConvertOrTypeAs(MethodCall(_, (MethodWithName "CreateEntities"), [String destEntity] ))
+                                                     OptionalQuote (Lambda([ParamName sourceAlias], exp) as lambda1)]) ->
 
                                 let outExp = processSelectManys projectionParams.[0].Name createRelated outExp
 
