@@ -169,18 +169,6 @@ module internal Oracle =
             | Some(obj) -> obj |> box
             | _ -> parameter.Value |> box
 
-    let buildTableNameWhereFilter columnName (tableNames : string) =
-        let trim (s:string) = s.Trim()
-        let names = tableNames.Split([|","|], StringSplitOptions.RemoveEmptyEntries)
-                    |> Seq.map trim
-                    |> Seq.toArray
-        match names with
-        | [||] -> ""
-        | [|name|] -> sprintf "and %s like '%s'" columnName name
-        | _ -> names |> Array.map (sprintf "%s like '%s'" columnName)
-                     |> String.concat " or "
-                     |> sprintf "and (%s)"
-
     let read conn f sql =
       seq { use cmd = createCommand sql conn
             use reader = cmd.ExecuteReader()
@@ -188,7 +176,7 @@ module internal Oracle =
               do yield f reader }
 
     let getIndexColumns tableNames conn = 
-        let whereTableName = buildTableNameWhereFilter "table_name" tableNames
+        let whereTableName = SchemaProjections.buildTableNameWhereFilter "table_name" tableNames
         let whereNotSystemOwner = 
           systemNames 
           |> List.map (sprintf "'%s'") 
@@ -203,7 +191,7 @@ module internal Oracle =
         |> dict
                
     let getPrimaryKeys tableNames conn =
-        let whereTableName = buildTableNameWhereFilter "a.table_name" tableNames
+        let whereTableName = SchemaProjections.buildTableNameWhereFilter "a.table_name" tableNames
         sprintf """select c.constraint_name, a.table_name, a.column_name, c.index_name 
                    from all_cons_columns a
                    join all_constraints c on a.constraint_name = c.constraint_name
@@ -221,10 +209,11 @@ module internal Oracle =
         |> dict
 
     let getTables tableNames conn = 
-        let whereTableName = buildTableNameWhereFilter "table_name" tableNames
-        sprintf """select owner, table_name, tablespace_name
-                   from all_tables
+        let whereTableName = SchemaProjections.buildTableNameWhereFilter "table_name" tableNames
+        sprintf """select owner, table_name, table_type
+                   from all_catalog
                    where owner != 'System'
+                     and table_type in ('TABLE', 'VIEW')
                    %s""" whereTableName
         |> read conn (fun row -> 
             { Schema = Sql.dbUnbox row.[0];
@@ -769,6 +758,11 @@ type internal OracleProvider(resolutionPath, owner, referencedAssemblies, tableN
             if sqlQuery.Ordering.Length > 0 then
                 ~~"ORDER BY "
                 orderByBuilder()
+
+            match sqlQuery.Union with
+            | Some(true, suquery) -> ~~(sprintf " UNION ALL %s " suquery)
+            | Some(false, suquery) -> ~~(sprintf " UNION %s " suquery)
+            | None -> ()
 
             //I think on oracle this will potentially impact the ordering as the row num is generated before any
             //filters or ordering is applied hance why this produces a nested query. something like

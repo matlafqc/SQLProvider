@@ -273,7 +273,7 @@ module MSSqlServer =
             use reader = com.ExecuteReader() :?> SqlDataReader
             Set(cols |> Array.map (processReturnColumn reader))
 
-type internal MSSqlServerProvider() =
+type internal MSSqlServerProvider(tableNames:string) =
     let pkLookup = ConcurrentDictionary<string,string list>()
     let tableLookup = ConcurrentDictionary<string,Table>()
     let columnLookup = ConcurrentDictionary<string,ColumnLookup>()
@@ -291,8 +291,8 @@ type internal MSSqlServerProvider() =
             ||> Seq.fold(fun (out,i) (k,v) ->
                 let name = sprintf "@param%i" i
                 let p = SqlParameter(name,v)
-                (k,p)::out,i+1)
-            |> fun (x,_)-> x
+                (sprintf "[%s]" k,p)::out,i+1)
+            |> fst
             |> List.rev
             |> List.toArray
             |> Array.unzip
@@ -300,14 +300,14 @@ type internal MSSqlServerProvider() =
         sb.Clear() |> ignore
         match haspk, pk with
         | true, [itm] ->
-            ~~(sprintf "INSERT INTO %s (%s) OUTPUT inserted.%s VALUES (%s);"
-                entity.Table.FullName
+            ~~(sprintf "INSERT INTO [%s].[%s] (%s) OUTPUT inserted.%s VALUES (%s);"
+                entity.Table.Schema entity.Table.Name
                 (String.Join(",",columnNames))
                 itm
                 (String.Join(",",values |> Array.map(fun p -> p.ParameterName))))
         | _ -> 
-            ~~(sprintf "INSERT INTO %s (%s) VALUES (%s);"
-                entity.Table.FullName
+            ~~(sprintf "INSERT INTO [%s].[%s] (%s) VALUES (%s);"
+                entity.Table.Schema entity.Table.Name
                 (String.Join(",",columnNames))
                 (String.Join(",",values |> Array.map(fun p -> p.ParameterName))))
 
@@ -342,15 +342,15 @@ type internal MSSqlServerProvider() =
                     | Some v -> SqlParameter(name,v)
                     | None -> SqlParameter(name,DBNull.Value)
                 (col,p)::out,i+1)
-            |> fun (x,_)-> x
+            |> fst
             |> List.rev
             |> List.toArray
 
         match pk with
         | [] -> ()
         | ks -> 
-            ~~(sprintf "UPDATE %s SET %s WHERE "
-                entity.Table.FullName
+            ~~(sprintf "UPDATE [%s].[%s] SET %s WHERE "
+                entity.Table.Schema entity.Table.Name
                 (String.Join(",", data |> Array.map(fun (c,p) -> sprintf "[%s] = %s" c p.ParameterName ) )))
             ~~(String.Join(" AND ", ks |> List.mapi(fun i k -> (sprintf "[%s] = @pk%i" k i))))
 
@@ -381,7 +381,7 @@ type internal MSSqlServerProvider() =
         match pk with
         | [] -> ()
         | ks -> 
-            ~~(sprintf "DELETE FROM %s WHERE " entity.Table.FullName)
+            ~~(sprintf "DELETE FROM [%s].[%s] WHERE " entity.Table.Schema entity.Table.Name)
             ~~(String.Join(" AND ", ks |> List.mapi(fun i k -> (sprintf "[%s] = @id%i" k i))))
 
         cmd.CommandText <- sb.ToString()
@@ -393,10 +393,14 @@ type internal MSSqlServerProvider() =
         member __.CreateCommandParameter(param, value) = MSSqlServer.createCommandParameter param value
         member __.ExecuteSprocCommand(con, inputParameters, returnCols, values:obj array) = MSSqlServer.executeSprocCommand con inputParameters returnCols values
         member __.CreateTypeMappings(con) = MSSqlServer.createTypeMappings con
-
+        
         member __.GetTables(con,_) =
+            let tableNamesFilter =
+                match tableNames with 
+                | "" -> ""
+                | x -> " where 1=1 " + (SchemaProjections.buildTableNameWhereFilter "TABLE_NAME" tableNames)
             MSSqlServer.connect con (fun con ->
-            use reader = MSSqlServer.executeSql "select TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE from INFORMATION_SCHEMA.TABLES" con
+            use reader = MSSqlServer.executeSql ("select TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE from INFORMATION_SCHEMA.TABLES" + tableNamesFilter) con
             [ while reader.Read() do
                 let table ={ Schema = reader.GetSqlString(0).Value ; Name = reader.GetSqlString(1).Value ; Type=reader.GetSqlString(2).Value.ToLower() }
                 yield tableLookup.GetOrAdd(table.FullName,table)
@@ -707,6 +711,11 @@ type internal MSSqlServerProvider() =
             if sqlQuery.Ordering.Length > 0 then
                 ~~"ORDER BY "
                 orderByBuilder()
+
+            match sqlQuery.Union with
+            | Some(true, suquery) -> ~~(sprintf " UNION ALL %s " suquery)
+            | Some(false, suquery) -> ~~(sprintf " UNION %s " suquery)
+            | None -> ()
 
             match sqlQuery.Skip, sqlQuery.Take with
             | Some skip, Some take ->

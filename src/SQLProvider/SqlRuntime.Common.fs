@@ -333,7 +333,8 @@ and internal SqlExp =
     | Projection   of Expression * SqlExp                // entire LINQ projection expression tree
     | Distinct     of SqlExp                             // distinct indicator
     | OrderBy      of alias * string * bool * SqlExp     // alias and column name, bool indicates ascending sort
-    | GroupBy      of alias * GroupData * SqlExp     // alias and column names
+    | Union        of bool * string * SqlExp             // true = "union all", false = "union", and subquery
+    | GroupBy      of alias * GroupData * SqlExp         // alias and column names
     | Skip         of int * SqlExp
     | Take         of int * SqlExp
     | Count        of SqlExp
@@ -349,6 +350,7 @@ and internal SqlExp =
                 | GroupBy(_,_,rest)
                 | Skip(_,rest)
                 | Take(_,rest)
+                | Union(_,_,rest)
                 | Count(rest) 
                 | AggregateOp(_,_,_,rest) -> aux rest
             aux this
@@ -364,11 +366,12 @@ and internal SqlQuery =
       UltimateChild : (string * Table) option
       Skip          : int option
       Take          : int option
+      Union         : (bool*string) option
       Count         : bool 
       AggregateOp   : (AggregateOperation * alias * string) list }
     with
         static member Empty = { Filters = []; Links = []; Grouping = []; Aliases = Map.empty; Ordering = []; Count = false; AggregateOp = []
-                                Projection = []; Distinct = false; UltimateChild = None; Skip = None; Take = None }
+                                Projection = []; Distinct = false; UltimateChild = None; Skip = None; Take = None; Union = None }
 
         static member ofSqlExp(exp,entityIndex: string ResizeArray) =
             let legaliseName (alias:alias) =
@@ -411,6 +414,7 @@ and internal SqlQuery =
                     if q.Skip.IsSome then failwith "skip may only be specified once"
                     else convert { q with Skip = Some(amount) } rest
                 | Take(amount, rest) ->
+                    if q.Union.IsSome then failwith "Union and take-limit is not yet supported as SQL-syntax varies."
                     match q.Take with
                     | Some x when amount <= x || amount = 1 -> convert { q with Take = Some(amount) } rest
                     | Some x -> failwith "take may only be specified once"
@@ -418,6 +422,10 @@ and internal SqlQuery =
                 | Count(rest) ->
                     if q.Count then failwith "count may only be specified once"
                     else convert { q with Count = true } rest
+                | Union(all,subquery, rest) ->
+                    if q.Union.IsSome then failwith "Union may only be specified once. However you can try: xs.Union(ys.Union(zs))"
+                    elif q.Take.IsSome then failwith "Union and take-limit is not yet supported as SQL-syntax varies."
+                    else convert { q with Union = Some(all,subquery) } rest
                 | AggregateOp(operation, alias, key, rest) ->
                     convert { q with AggregateOp = (operation, alias, key)::q.AggregateOp } rest
             let sq = convert (SqlQuery.Empty) exp

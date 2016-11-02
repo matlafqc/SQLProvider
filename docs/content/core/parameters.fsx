@@ -86,19 +86,24 @@ let useOptionTypes = true
 
 ### MSSQL
 
-No extra parameters.
+TableNames to filter amount of tables.
 
 ### Oracle
 
-Currently there is only one added parameter.
+TableNames to filter amount of tables, and Owner.
 
-#### Owner (Oracle only)
+#### Owner (Used by Oracle, MySQL and PostgreSQL)
 
-This sets the owner of the scheme when running queries against the server.
+This has different meanings when running queries against different database vendors
+
+For PostgreSQL, this sets the schema name where the target tables belong to
+For MySQL, this sets the database name (Or schema name, for MySQL, it's the same thing)
+For Oracle, this sets the owner of the scheme
 
 ### SQLite
 
-No extra parameters.
+The additional [SQLiteLibrary parameter](sqlite.html#SQLiteLibrary) can be used to specify
+which SQLite library to load.
 
 ### PostgreSQL
 
