@@ -32,13 +32,13 @@ module internal QueryImplementation =
     let parseResults (projector:Delegate) (results:SqlEntity[]) =
         let args = projector.GetType().GenericTypeArguments
         seq { 
-            // Todo: GroupBy: How do we read group-by results?
+            // Todo: GroupBy: How do we map group-by results back to wanted objects?
             if args.Length > 0 && args.[0].Name.StartsWith("IGrouping") then
                 // do group-read
                 let collected = 
                     results |> Seq.map(fun e ->
                         let data = e.ColumnValues
-                        let keyname, keyvalue = data.First()
+                        let keyname, keyvalue = data.First() // e.ColumnValues contains the correct result:
                         let grp = FSharp.Data.Sql.QueryExpression.QueryExpressionTransformer.GroupResultItems(keyvalue.ToString(),[e]) :> IGrouping<_, _>
                         grp)
                 for e in collected -> projector.DynamicInvoke(e) 
@@ -405,11 +405,10 @@ module internal QueryImplementation =
                             | TupleSqlColumnsGet itms -> itms |> List.map(fun (ti,key,typ) -> getAlias ti, key)
                             | _ -> []
 
-                        // ToDo: GroupBy: We have to parse the key and aggregate columns!
                         let data =  {
                             PrimaryTable = sourceEntity
                             KeyColumns = keycols
-                            AggregateColumns = [] //[CountOp,alias,"City"]
+                            AggregateColumns = [] // Aggregates will be populated later: [CountOp,alias,"City"]
                         }
                         let exp =
                             SelectMany(sourceEntity.Name,"grp",GroupQuery(data),source.SqlExpression)
@@ -545,7 +544,7 @@ module internal QueryImplementation =
 
                                 let data = {  PrimaryTable = Table.FromFullName destEntity; 
                                                KeyColumns = keycols;
-                                               AggregateColumns = []; // Todo: GroupBy: Fetch aggregation cols here!
+                                               AggregateColumns = []; // Aggregates will be populated later: [CountOp,alias,"City"]
                                            }
                                 SelectMany(sourceAlias,"grp", GroupQuery(data),outExp)
                             | MethodCall(None, (MethodWithName "Join"),

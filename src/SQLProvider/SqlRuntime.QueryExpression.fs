@@ -9,6 +9,7 @@ open FSharp.Data.Sql.Patterns
 open FSharp.Data.Sql.Schema
 
 module internal QueryExpressionTransformer =
+    open FSharp.Data.Sql
 
     type GroupResultItems<'key, 'itm>(k, collection:seq<'itm>) =
         inherit ResizeArray<'itm> (collection) 
@@ -39,6 +40,7 @@ module internal QueryExpressionTransformer =
             // onto GetSubEntity on the result parameter with the correct alias
 
         let projectionMap = Dictionary<string,string ResizeArray>()
+        let groupProjectionMap = ResizeArray<AggregateOperation>()
         
         let (|SourceTupleGet|_|) (e:Expression) =
             match e with
@@ -153,7 +155,19 @@ module internal QueryExpressionTransformer =
                                                                                     if replaceParams.Count>0 then
                                                                                         ExpressionOptimizer.Methods.``remove AnonymousType`` memb
                                                                                     else upcast memb
-            | ExpressionType.Call,               (:? MethodCallExpression as e)  -> upcast Expression.Call( (if e.Object = null then null else transform en e.Object), e.Method, e.Arguments |> Seq.map(fun a -> transform en a))
+            | ExpressionType.Call,               (:? MethodCallExpression as e)  -> let op =
+                                                                                        // Todo: How do we know that this is an aggregate operation?
+                                                                                        match e.Method.Name with
+                                                                                        | "Count" -> Some CountOp
+                                                                                        | "Sum" -> Some Sum
+                                                                                        | "Avg" -> Some Avg
+                                                                                        | "Min" -> Some Min
+                                                                                        | "Max" -> Some Max
+                                                                                        | _ -> None
+                                                                                    match op with
+                                                                                    | Some o when not(groupProjectionMap.Contains(o)) -> groupProjectionMap.Add(o)
+                                                                                    | _ -> ()
+                                                                                    upcast Expression.Call( (if e.Object = null then null else transform en e.Object), e.Method, e.Arguments |> Seq.map(fun a -> transform en a))
             | ExpressionType.Lambda,             (:? LambdaExpression as e)      -> let exType = e.GetType()
                                                                                     if  exType.IsGenericType
                                                                                         && exType.GetGenericTypeDefinition() = typeof<Expression<obj>>.GetGenericTypeDefinition()
@@ -182,7 +196,7 @@ module internal QueryExpressionTransformer =
             | SingleTable(OptionalQuote(lambda))
             | MultipleTables(OptionalQuote(lambda)) -> transform None lambda
 
-        newProjection, projectionMap
+        newProjection, projectionMap, groupProjectionMap
 
     let convertExpression exp (entityIndex:string ResizeArray) con (provider:ISqlProvider) =
         // first convert the abstract query tree into a more useful format
@@ -192,6 +206,7 @@ module internal QueryExpressionTransformer =
         let entityIndex = new ResizeArray<_>(entityIndex |> Seq.map (legaliseName))
 
         let sqlQuery = SqlQuery.ofSqlExp(exp,entityIndex)
+        let groupgin = new ResizeArray<_>()
 
          // note : the baseAlias here will always be "" when no criteria has been applied, because the LINQ tree never needed to refer to it
         let baseAlias,baseTable =
@@ -266,8 +281,25 @@ module internal QueryExpressionTransformer =
                         | _ -> ()
 
                     generateReplacementParams(currentProj)
-                    let newProjection, projectionMap = transform currentProj entityIndex dbParam sqlQuery.Aliases sqlQuery.UltimateChild replaceParams
+                    let newProjection, projectionMap, groupProjectionMap = transform currentProj entityIndex dbParam sqlQuery.Aliases sqlQuery.UltimateChild replaceParams
                     let fixedParams = Expression.Lambda((newProjection:?>LambdaExpression).Body,initDbParam)
+                    
+                    if sqlQuery.Grouping.Length > 0 then
+                            
+                        let gatheredAggregations = 
+                            sqlQuery.Grouping |> List.map(fun (group,_) ->
+                                // GroupBy: collect aggreagte operations
+                                let aggregations:(AggregateOperation * alias * string) list =
+                                    groupProjectionMap 
+                                    |> Seq.map(fun op -> 
+//                                        match group |> Seq.tryFind(fun (a,s) -> a=aliasAndOps.Key) with
+//                                        | Some(_, keyitm) -> aliasAndOps.Value |> Seq.map(fun ao -> ao, aliasAndOps.Key, keyitm)
+//                                        | None -> Seq.empty
+                                        group |> Seq.map(fun (a,n) -> op,a,n)
+                                    ) |> Seq.concat |> Seq.toList
+                                group, aggregations)
+                        groupgin.AddRange(gatheredAggregations)
+
                     //QueryEvents.PublishExpression fixedParams
                     fixedParams,projectionMap
                 
@@ -282,6 +314,11 @@ module internal QueryExpressionTransformer =
                 let generatedMegaLambda, finalParams = composeProjections projs (Unchecked.defaultof<LambdaExpression>) (Dictionary<string, ResizeArray<string>>())
                 QueryEvents.PublishExpression generatedMegaLambda
                 (generatedMegaLambda.Compile(),finalParams)
+
+        let sqlQuery = 
+            if groupgin.Count > 0 then
+                { sqlQuery with Grouping = groupgin |> Seq.toList }
+            else sqlQuery
 
         // a special case here to handle queries that start from the relationship of an individual
         let sqlQuery,baseAlias =

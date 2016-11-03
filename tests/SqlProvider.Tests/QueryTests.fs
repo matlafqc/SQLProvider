@@ -464,7 +464,7 @@ let ``simple select query with groupBy``() =
     let res = qry |> dict  
     Assert.IsNotEmpty(res)
     //Assert.AreEqual(6, res.["London"])
-
+    
 [<Test; Ignore("Not Supported")>]
 let ``simple select query with groupBy2``() = 
     let dc = sql.GetDataContext()
@@ -946,4 +946,27 @@ let ``simple union all query test``() =
     let res2 = query1.Concat(query2) |> Seq.toArray
     Assert.IsNotEmpty(res2)
     
+[<Test>]
+let ``verify groupBy results``() = 
+    let dc = sql.GetDataContext()
+    let enumtest =
+        query {
+            for cust in dc.Main.Customers do
+            select (cust)
+        } |> Seq.toList
+    let inlogics = 
+        query {
+            for cust in enumtest do
+            groupBy cust.City into c
+            select (c.Key, c.Count())
+        } |> Seq.toArray |> Array.sortBy (fun (k,v) -> k )
 
+    let groupqry = 
+        query {
+            for cust in dc.Main.Customers do
+            groupBy cust.City into c
+            select (c.Key, c.Count())
+        } |> Seq.toArray |> Array.sortBy (fun (k,v) -> k )
+    let res = groupqry |> dict  
+
+    CollectionAssert.AreEqual(inlogics,groupqry)
